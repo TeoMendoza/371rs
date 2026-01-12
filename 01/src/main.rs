@@ -12,28 +12,12 @@ fn main() {
     wc(file_path);
 }
 
-fn wc(file: &str) {
-    let lines = read_lines(&file);
-    let mut line_count: u64 = 0;
-    let mut word_count: u64 = 0;
-    let mut byte_count: u64 = 0;
+fn wc(file_path: &str) {
+    let file_contents: String = std::fs::read_to_string(file_path).unwrap();
 
-    for line in lines.iter() {
-        line_count += 1;
-        word_count += line.split_whitespace().count() as u64;
-        byte_count += line.as_bytes().len() as u64;
-    }
+    let byte_count: u64 = file_contents.as_bytes().len() as u64;
+    let line_count: u64 = file_contents.as_bytes().iter().filter(|byte| **byte == b'\n').count() as u64;
+    let word_count: u64 = file_contents.split_whitespace().count() as u64;
 
     println!("Line Count {}, Word Count {}, Bytes {}", line_count, word_count, byte_count);
-}
-
-
-fn read_lines(filename: &str) -> Vec<String> {
-    let mut result = Vec::new();
-
-    for line in std::fs::read_to_string(filename).unwrap().lines() {
-        result.push(line.to_string())
-    }
-
-    result
 }
