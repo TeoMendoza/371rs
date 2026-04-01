@@ -16,7 +16,7 @@ pub const QemuPass: u32 = 0xA;
 pub const QemuFail: u32 = 0xB;
 
 pub fn Init() {
-    gdt::Init(); // MUST HAPPEN FIRST!
+    gdt::Init();
     interrupts::InitIdt();
 }
 

@@ -9,7 +9,8 @@ lazy_static! {
         let mut idt = InterruptDescriptorTable::new();
         idt.breakpoint.set_handler_fn(BreakpointHandler);
         unsafe {
-            idt.double_fault.set_handler_fn(DoubleFaultHandler)
+            idt.double_fault
+                .set_handler_fn(DoubleFaultHandler)
                 .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
         }
         idt
@@ -20,14 +21,8 @@ pub fn InitIdt() {
     IDT.load();
 }
 
-extern "x86-interrupt" fn BreakpointHandler(stack_frame: InterruptStackFrame) {
-    // Prints to VGA screen, avoiding the bootimage serial-port trap!
-    crate::println!("EXCEPTION: BREAKPOINT\n{:#?}", stack_frame);
-}
+extern "x86-interrupt" fn BreakpointHandler(_stack_frame: InterruptStackFrame) {}
 
-extern "x86-interrupt" fn DoubleFaultHandler(
-    stack_frame: InterruptStackFrame,
-    _error_code: u64,
-) -> ! {
-    panic!("EXCEPTION: DOUBLE FAULT\n{:#?}", stack_frame);
+extern "x86-interrupt" fn DoubleFaultHandler(_stack_frame: InterruptStackFrame, _error_code: u64) -> ! {
+    panic!("EXCEPTION: DOUBLE FAULT");
 }
