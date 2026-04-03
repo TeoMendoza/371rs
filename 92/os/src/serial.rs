@@ -30,5 +30,7 @@ macro_rules! serial_println {
 
 pub fn _print(Arguments: fmt::Arguments) {
     use core::fmt::Write;
-    Serial1.lock().write_fmt(Arguments).unwrap();
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        Serial1.lock().write_fmt(Arguments).unwrap();
+    });
 }

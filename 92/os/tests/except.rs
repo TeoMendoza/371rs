@@ -20,7 +20,8 @@ pub extern "C" fn _start() -> ! {
 
 #[test_case]
 fn BreakpointException() {
-    osirs::serial_println!("[BreakpointException...]");
+    osirs::serial_println!("Breakpoint Exception Invoked!"); 
+    
     x86_64::instructions::interrupts::int3();
-    osirs::serial_println!("[Exception Handled]");
+    osirs::QemuQuit(osirs::QemuPass);
 }

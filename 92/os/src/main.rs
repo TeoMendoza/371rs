@@ -9,7 +9,7 @@ use core::panic::PanicInfo;
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(PanicInformation: &PanicInfo) -> ! {
-    osirs::println!("{}", PanicInformation);
+    osirs::serial_println!("{}", PanicInformation);
     loop {}
 }
 
@@ -21,17 +21,19 @@ fn panic(PanicInformation: &PanicInfo) -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    osirs::println!("Hello World!");
     osirs::Init();
+    osirs::vga::ClearScreen();
+    osirs::clock::PrintPrompt();
 
     #[cfg(test)]
     test_main();
 
     #[cfg(not(test))]
-    {
-        x86_64::instructions::interrupts::int3();
-        osirs::println!("It did not crash!");
+    loop {
+        osirs::clock::Update();
+        x86_64::instructions::hlt();
     }
 
+    #[cfg(test)]
     loop {}
 }

@@ -5,7 +5,7 @@
 
 #[panic_handler]
 fn test_panic(_info: &core::panic::PanicInfo) -> ! {
-    osirs::serial_println!("[Pass]");
+    osirs::serial_println!("Test Panic Handled!");
     osirs::QemuQuit(osirs::QemuPass);
 }
 

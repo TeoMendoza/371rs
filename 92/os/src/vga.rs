@@ -1,89 +1,121 @@
 use core::fmt;
 use core::ptr::{read_volatile, write_volatile};
 
-static mut LATEST: usize = 0;
+use lazy_static::lazy_static;
+use spin::Mutex;
 
 const MMIO: usize = 0xb8000;
 const COLOR: u8 = 0x0f;
 
-const ROWS: usize = 80;
-const COLS: usize = 25;
-const MAX: usize = ROWS * COLS;
+const ROWS: usize = 25;
+const COLS: usize = 80;
 
-pub fn char_to_vga(Byte: u8) {
-    unsafe {
-        if LATEST >= MAX {
-            scroll();
-        }
-
-        let Cell: *mut u8 = (MMIO + (LATEST * 2)) as *mut u8;
-
-        write_volatile(Cell, Byte);
-        write_volatile(Cell.add(1), COLOR);
-
-        LATEST += 1;
-    }
+lazy_static! {
+    static ref WRITER: Mutex<Writer> = Mutex::new(Writer::new());
 }
 
-pub fn str_to_vga(Text: &str) {
-    let Bytes = Text.as_bytes();
+pub struct Writer {
+    RowPosition: usize,
+    ColumnPosition: usize,
+    ColorCode: u8,
+}
 
-    unsafe {
-        for Index in 0..Bytes.len() {
-            if LATEST >= MAX {
-                scroll();
-            }
+impl Writer {
+    pub const fn new() -> Self {
+        Self {
+            RowPosition: 0,
+            ColumnPosition: 0,
+            ColorCode: COLOR,
+        }
+    }
 
-            match Bytes[Index] {
-                10 => {
-                    LATEST = ((LATEST / ROWS) + 1) * ROWS;
+    fn write_byte(&mut self, Byte: u8) {
+        match Byte {
+            b'\n' => self.new_line(),
+            Byte => {
+                if self.ColumnPosition >= COLS {
+                    self.new_line();
                 }
-                Other => {
-                    char_to_vga(Other);
-                }
+
+                self.write_cell(self.RowPosition, self.ColumnPosition, Byte, self.ColorCode);
+                self.ColumnPosition += 1;
             }
         }
     }
-}
 
-fn scroll() {
-    unsafe {
-        for Index in ROWS..MAX {
-            let Source: *mut u8 = (MMIO + Index * 2) as *mut u8;
-            let Destination: *mut u8 = (MMIO + (Index - ROWS) * 2) as *mut u8;
-
-            let Character = read_volatile(Source);
-            write_volatile(Destination, Character);
-            write_volatile(Destination.add(1), COLOR);
+    fn write_string(&mut self, Text: &str) {
+        for Byte in Text.bytes() {
+            match Byte {
+                0x20..=0x7e | b'\n' => self.write_byte(Byte),
+                _ => self.write_byte(0xfe),
+            }
         }
+    }
 
-        for Index in (MAX - ROWS)..MAX {
-            let Destination: *mut u8 = (MMIO + Index * 2) as *mut u8;
-            write_volatile(Destination, 32);
-            write_volatile(Destination.add(1), COLOR);
-        }
+    fn new_line(&mut self) {
+        self.ColumnPosition = 0;
 
-        if LATEST >= ROWS {
-            LATEST -= ROWS;
+        if self.RowPosition < ROWS - 1 {
+            self.RowPosition += 1;
         } else {
-            LATEST = 0;
+            self.scroll_up();
+            self.clear_row(ROWS - 1);
         }
+    }
+
+    fn scroll_up(&mut self) {
+        for RowIndex in 1..ROWS {
+            for ColIndex in 0..COLS {
+                let Character = self.read_character(RowIndex, ColIndex);
+                let ColorCode = self.read_color(RowIndex, ColIndex);
+                self.write_cell(RowIndex - 1, ColIndex, Character, ColorCode);
+            }
+        }
+    }
+
+    fn clear_row(&mut self, RowIndex: usize) {
+        for ColIndex in 0..COLS {
+            self.write_cell(RowIndex, ColIndex, b' ', self.ColorCode);
+        }
+    }
+
+    fn read_character(&self, RowIndex: usize, ColIndex: usize) -> u8 {
+        let Cell = self.cell_ptr(RowIndex, ColIndex);
+        unsafe { read_volatile(Cell) }
+    }
+
+    fn read_color(&self, RowIndex: usize, ColIndex: usize) -> u8 {
+        let Cell = self.cell_ptr(RowIndex, ColIndex);
+        unsafe { read_volatile(Cell.add(1)) }
+    }
+
+    fn write_cell(&self, RowIndex: usize, ColIndex: usize, Character: u8, ColorCode: u8) {
+        let Cell = self.cell_ptr(RowIndex, ColIndex);
+        unsafe {
+            write_volatile(Cell, Character);
+            write_volatile(Cell.add(1), ColorCode);
+        }
+    }
+
+    fn cell_ptr(&self, RowIndex: usize, ColIndex: usize) -> *mut u8 {
+        let Offset = (RowIndex * COLS + ColIndex) * 2;
+        (MMIO + Offset) as *mut u8
     }
 }
 
-pub struct Dummy {}
-
-impl fmt::Write for Dummy {
+impl fmt::Write for Writer {
     fn write_str(&mut self, Text: &str) -> fmt::Result {
-        str_to_vga(Text);
+        self.write_string(Text);
         Ok(())
     }
 }
 
 pub fn _print(Arguments: fmt::Arguments) {
     use core::fmt::Write;
-    let mut Writer = Dummy {};
-    Writer.write_fmt(Arguments).unwrap();
+
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        WRITER.lock().write_fmt(Arguments).unwrap();
+    });
 }
 
 #[macro_export]
@@ -95,4 +127,59 @@ macro_rules! print {
 macro_rules! println {
     () => ($crate::print!("\n"));
     ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
+}
+
+pub fn ClearScreen() {
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let mut Writer = WRITER.lock();
+
+        for RowIndex in 0..ROWS {
+            Writer.clear_row(RowIndex);
+        }
+
+        Writer.RowPosition = 0;
+        Writer.ColumnPosition = 0;
+    });
+}
+
+pub fn WriteAt(Row: usize, Col: usize, Text: &str) {
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let mut Writer = WRITER.lock();
+
+        let OriginalRow = Writer.RowPosition;
+        let OriginalCol = Writer.ColumnPosition;
+
+        Writer.RowPosition = Row;
+        Writer.ColumnPosition = Col;
+
+        Writer.write_string(Text);
+
+        Writer.RowPosition = OriginalRow;
+        Writer.ColumnPosition = OriginalCol;
+    });
+}
+
+pub fn SetCursorPosition(Row: usize, Col: usize) {
+    let Position: u16 = (Row * COLS + Col) as u16;
+
+    unsafe {
+        let mut CommandPort = x86_64::instructions::port::Port::<u8>::new(0x3D4);
+        let mut DataPort = x86_64::instructions::port::Port::<u8>::new(0x3D5);
+
+        CommandPort.write(0x0F);
+        DataPort.write((Position & 0x00FF) as u8);
+
+        CommandPort.write(0x0E);
+        DataPort.write((Position >> 8) as u8);
+    }
+}
+
+pub fn SetWriterPosition(Row: usize, Col: usize) {
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let mut Writer = WRITER.lock();
+        Writer.RowPosition = Row;
+        Writer.ColumnPosition = Col;
+    });
+
+    SetCursorPosition(Row, Col);
 }
